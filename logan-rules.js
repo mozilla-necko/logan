@@ -463,7 +463,7 @@ logan.schema("MOZ_LOG",
       });
 
       module.rule("nsHttpHandler::NotifyObservers [this=%p chan=%p event=%s]", function(ptr, channelPtr, eventTopic) {
-        this.obj(ptr).capture();
+        this.obj(ptr).capture().link(channelPtr);
       });
 
       /******************************************************************************
@@ -587,7 +587,7 @@ logan.schema("MOZ_LOG",
        * nsHttpChannel
        ******************************************************************************/
 
-      module.rule("Creating nsHttpChannel [this=%p]", function(ch) {
+      module.rule("Creating nsHttpChannel [this=%p, nsIChannel=%p]", function(ch, nsIChannelPtr) {
         this.thread.on("httpbasechannel", httpbasechannel => {
           ch = this.obj(ch).inherits(httpbasechannel, "nsHttpChannel").grep().expect("uri=%s", (ch, uri) => {
             ch.prop("url", uri).capture();
@@ -605,9 +605,11 @@ logan.schema("MOZ_LOG",
         this.thread.on("openingwebsocket", ws => {
           ws.link(ch).prop("url", ch.props.url);
         });
+        this.obj(nsIChannelPtr).create("nsIChannelPtr");
       });
-      module.rule("Destroying nsHttpChannel [this=%p]", function(ptr) {
+      module.rule("Destroying nsHttpChannel [this=%p, nsIChannel=%p]", function(ptr, nsIChannelPtr) {
         this.obj(ptr).destroy();
+        this.obj(nsIChannelPtr).destroy();
       });
       module.rule("nsHttpChannel::Init [this=%p]", function(ptr) {
         this.thread.httpchannel_init = this.obj(ptr).capture();
