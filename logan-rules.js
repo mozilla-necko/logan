@@ -1526,6 +1526,322 @@ logan.schema("MOZ_LOG",
       logan.summaryProps("nsHalfOpenSocket", ["key"]);
 
       /******************************************************************************
+       * DnsAndConnectSocket (modern replacement for nsHalfOpenSocket)
+       ******************************************************************************/
+
+      // Every rule below uses .class("DnsAndConnectSocket") so the object is
+      // retro-classed if its `Creating` line was rotated/filtered out and the
+      // first sighting in the log is something else. (Without this, the object
+      // would render as "?:<id>" in result rows and link arrows.)
+      // The key field can contain spaces (route, NPN token, originAttributes),
+      // so use %* instead of %s to swallow up to the closing bracket.
+      module.rule("Creating DnsAndConnectSocket [this=%p trans=%p ent=%s key=%*]",
+        function(ho, trans, ent, key) {
+          this.thread.dnsandconnect = this.obj(ho).create("DnsAndConnectSocket")
+            .prop("origin", ent).prop("key", key)
+            .mention(key).mention(ent).grep().capture();
+        });
+      module.rule("DnsAndConnectSocket::SetupDnsFlags [this=%p] ", function(ho) {
+        this.obj(ho).class("DnsAndConnectSocket").capture();
+      });
+      module.rule("DnsAndConnectSocket::SetupDnsFlags flags=%u flagsBackup=%u [this=%p]",
+        function(flags, backup, ho) {
+          this.obj(ho).class("DnsAndConnectSocket").capture();
+        });
+      module.rule("DnsAndConnectSocket::SetupEvent state=%d event=%d this=%p",
+        function(state, event, ho) {
+          this.thread.dnsandconnect = this.obj(ho).class("DnsAndConnectSocket").capture();
+        });
+      module.rule("DnsAndConnectSocket::SetupBackupTimer() [this=%p]", function(ho) {
+        this.obj(ho).class("DnsAndConnectSocket").capture();
+      });
+      module.rule("DnsAndConnectSocket::SetupBackupTimer() [this=%p], did not arm", function(ho) {
+        this.obj(ho).class("DnsAndConnectSocket").capture();
+      });
+      module.rule("DnsAndConnectSocket::Abandon [this=%p ent=%s] %p %p %p %p",
+        function(ho, ent, ps, bs, po, bo) {
+          this.obj(ho).class("DnsAndConnectSocket").state("abandoned").capture();
+        });
+      module.rule("DnsAndConnectSocket::OnOutputStreamReady [this=%p ent=%s %s]",
+        function(ho, ent, streamtype) {
+          this.thread.dnsandconnect = this.obj(ho).class("DnsAndConnectSocket").capture();
+        });
+      module.rule("DnsAndConnectSocket::SetupStreams [this=%p ent=%s] setup routed transport to origin %s:%d via %s:%d",
+        function(ho, ent, origin, port, route, routePort) {
+          ho = this.obj(ho).class("DnsAndConnectSocket").capture();
+          // The next nsSocketTransport created on this thread is the primary
+          // (or backup, if primary is already linked) TCP socket.
+          this.thread.on("networksocket", (sock) => {
+            ho.link(sock);
+            if (!ho.primarysocket) {
+              ho.primarysocket = sock;
+            } else {
+              ho.backupsocket = sock;
+            }
+            return sock;
+          });
+        });
+      module.rule("DnsAndConnectSocket::TransportSetup::ResolveHost [this=%p %s]",
+        function(ho, host) {
+          this.obj(ho).class("DnsAndConnectSocket").capture();
+        });
+      // The conn-creation log: %s is "using http3" or empty. Capture rest-of-line
+      // so the trailing-empty case doesn't break the regex anchor.
+      // HttpConnectionUDP talks to a nsIUDPSocket directly and never owns an
+      // nsSocketTransport, so for the HTTP/3 branch we skip the networksocket
+      // link (otherwise a stale `thread.networksocket` would attach a bogus
+      // edge to the connection).
+      schema.ruleIf("DnsAndConnectSocket::SocketTransport::SetupConn Created new nshttpconnection %p %*$",
+        proc => proc.thread.dnsandconnect,
+        function(conn, rest, ho) {
+          delete this.thread.dnsandconnect;
+          let isHttp3 = rest && rest.indexOf("http3") !== -1;
+          conn = this.obj(conn);
+          if (isHttp3) {
+            conn.prop("is-http3", true);
+          } else {
+            this.thread.on("networksocket", st => {
+              conn.link(st);
+              conn.networksocket = st;
+              return st;
+            });
+          }
+          ho.class("DnsAndConnectSocket").link(conn).capture();
+        });
+      module.rule("DnsAndConnectSocket::SetupConn conn->init (%p) failed %x",
+        function(conn, rv) {
+          this.obj(conn).capture();
+        });
+      module.rule("DnsAndConnectSocket::SetupConn null transaction will be used to finish SSL handshake on conn %p",
+        function(conn) {
+          this.obj(conn).capture();
+        });
+      module.rule("DnsAndConnectSocket::SetupConn no transaction match returning conn %p to pool",
+        function(conn) {
+          this.obj(conn).capture();
+        });
+      module.rule("DnsAndConnectSocket this=%p using legacy nsISocketTransportService means explicit route %s:%d will be ignored.",
+        function(ho, route, port) {
+          this.obj(ho).class("DnsAndConnectSocket").capture();
+        });
+      module.rule("Destroying DnsAndConnectSocket [this=%p]", function(ptr) {
+        this.obj(ptr).destroy();
+      });
+      logan.summaryProps("DnsAndConnectSocket", ["origin"]);
+
+      /******************************************************************************
+       * HappyEyeballsConnectionAttempt (Happy-Eyeballs orchestrator;
+       *   per-attempt work is tracked by ConnectionEstablisher below)
+       ******************************************************************************/
+
+      module.rule("HappyEyeballsConnectionAttempt ctor %p", function(ptr) {
+        this.thread.happyeye = this.obj(ptr).create("HappyEyeballsConnectionAttempt").grep().capture();
+      });
+      module.rule("HappyEyeballsConnectionAttempt dtor %p", function(ptr) {
+        this.obj(ptr).destroy();
+      });
+      module.rule("HappyEyeballsConnectionAttempt for HTTP/3", function() {
+        if (this.thread.happyeye) {
+          this.thread.happyeye.prop("is-http3", true).capture();
+        }
+      });
+      module.rule("HappyEyeballsConnectionAttempt::ProcessHappyEyeballsOutput %p", function(ptr) {
+        this.thread.happyeye = this.obj(ptr).class("HappyEyeballsConnectionAttempt").capture();
+      });
+      module.rule("HappyEyeballsConnectionAttempt::ProcessConnectionResult %p addr=[%s] id=%u aStatus=%x",
+        function(ptr, addr, id, status) {
+          this.thread.happyeye = this.obj(ptr).class("HappyEyeballsConnectionAttempt").capture();
+        });
+      module.rule("HappyEyeballsConnectionAttempt::SetupDnsFlags [this=%p aType=%d] ",
+        function(ptr, atype) {
+          this.thread.happyeye = this.obj(ptr).class("HappyEyeballsConnectionAttempt").capture();
+        });
+      module.rule("HappyEyeballsConnectionAttempt::CancelConnection id=%u", function(id) {
+        if (this.thread.happyeye) this.thread.happyeye.capture();
+      });
+      module.rule("HappyEyeballsConnectionAttempt::CloseHttpTransaction %p reason=%d",
+        function(ptr, reason) {
+          this.obj(ptr).class("HappyEyeballsConnectionAttempt").capture();
+        });
+      module.rule("HappyEyeballsConnectionAttempt::Abandon %p", function(ptr) {
+        this.obj(ptr).class("HappyEyeballsConnectionAttempt").state("abandoned").capture();
+      });
+      module.rule("HappyEyeballsConnectionAttempt::OnSucceeded %p", function(ptr) {
+        this.obj(ptr).class("HappyEyeballsConnectionAttempt").state("succeeded").capture();
+      });
+      module.rule("HappyEyeballsConnectionAttempt::OnARecord: this=%p status %x rec=%p",
+        function(ptr, status, rec) {
+          this.obj(ptr).class("HappyEyeballsConnectionAttempt").capture();
+        });
+      module.rule("HappyEyeballsConnectionAttempt::OnAAAARecord: this=%p status %x rec=%p",
+        function(ptr, status, rec) {
+          this.obj(ptr).class("HappyEyeballsConnectionAttempt").capture();
+        });
+      module.rule("HappyEyeballsConnectionAttempt::OnHTTPSRecord %p status=%x id=%u",
+        function(ptr, status, id) {
+          this.obj(ptr).class("HappyEyeballsConnectionAttempt").capture();
+        });
+      module.rule("HappyEyeballsConnectionAttempt::SetupTimer to %ums [this=%p].",
+        function(ms, ptr) {
+          this.obj(ptr).class("HappyEyeballsConnectionAttempt").capture();
+        });
+      module.rule("HappyEyeballsConnectionAttempt::OnLookupComplete", function() {
+        if (this.thread.happyeye) this.thread.happyeye.capture();
+      });
+      // Conn-level lines emitted inside Process{TCP,UDP}Conn — no `this=`,
+      // associate with the surrounding HappyEyeballs operation.
+      module.rule("Got connTCP:%p transactionAlreadyOnConn=%d", function(conn, on) {
+        conn = this.obj(conn).capture();
+        if (this.thread.happyeye) {
+          this.thread.happyeye.link(conn).capture();
+        }
+      });
+      module.rule("Got connUDP:%p transactionAlreadyOnConn=%d", function(conn, on) {
+        conn = this.obj(conn).capture();
+        if (this.thread.happyeye) {
+          this.thread.happyeye.link(conn).capture();
+        }
+      });
+      module.rule("ProcessTCPConn no transaction match returning conn %p to pool", function(conn) {
+        this.obj(conn).capture();
+      });
+      module.rule("ProcessUDPConn transaction already done, not activating", function() {
+        if (this.thread.happyeye) this.thread.happyeye.capture();
+      });
+      logan.summaryProps("HappyEyeballsConnectionAttempt", ["state"]);
+
+      /******************************************************************************
+       * ConnectionEstablisher (TCP/UDP variants both share the base ctor/dtor LOG)
+       ******************************************************************************/
+
+      module.rule("ConnectionEstablisher ctor:%p", function(ptr) {
+        let est = this.obj(ptr).create("ConnectionEstablisher").grep().capture();
+        if (this.thread.happyeye) {
+          this.thread.happyeye.link(est);
+        }
+        this.thread.lastestablisher = est;
+      });
+      module.rule("ConnectionEstablisher dtor:%p", function(ptr) {
+        this.obj(ptr).destroy();
+      });
+      // The base ctor fires for both TCP and UDP variants; UDP additionally
+      // logs its own ctor right after, so we tag the protocol there. (TCP has
+      // no separate ctor LOG, so absence of `udp` implies `tcp`.)
+      module.rule("UDPConnectionEstablisher ctor:%p", function(ptr) {
+        this.obj(ptr).class("ConnectionEstablisher").prop("protocol", "udp").capture();
+      });
+      module.rule("UDPConnectionEstablisher dtor:%p", function(ptr) {
+        this.obj(ptr).capture();
+      });
+      module.rule("ConnectionEstablisher::FinishInternal %p result=%x", function(ptr, rv) {
+        this.obj(ptr).capture();
+      });
+      module.rule("ConnectionEstablisher::ActivateConnectionWithTransaction %p conn=%p trans=%p",
+        function(ptr, conn, trans) {
+          let est = this.obj(ptr).class("ConnectionEstablisher").capture();
+          conn = this.obj(conn).capture();
+          trans = this.obj(trans).capture();
+          est.link(conn);
+          est.link(trans);
+        });
+      module.rule("TCPConnectionEstablisher::Close %p aReason=%x", function(ptr, reason) {
+        this.obj(ptr).class("ConnectionEstablisher").prop("protocol", "tcp")
+          .state("closed").prop("close-reason", reason).capture();
+      });
+      module.rule("TCPConnectionEstablisher::Close %p adopted conn %p DontReuse",
+        function(ptr, conn) {
+          this.obj(ptr).class("ConnectionEstablisher").capture()
+            .link(this.obj(conn).capture());
+        });
+      module.rule("TCPConnectionEstablisher::Close closing connection %p", function(conn) {
+        this.obj(conn).capture();
+      });
+      module.rule("TCPConnectionEstablisher::OnOutputStreamReady %p mFinished=%d",
+        function(ptr, finished) {
+          this.obj(ptr).class("ConnectionEstablisher").capture();
+        });
+      module.rule("TCPConnectionEstablisher::CreateAndConfigureSocketTransport [this=%p info=%s] setup routed transport to origin %s:%d via %s:%d",
+        function(ptr, info, origin, port, route, routePort) {
+          let est = this.obj(ptr).class("ConnectionEstablisher")
+            .prop("protocol", "tcp").propIfNull("info", info).capture();
+          // The next nsSocketTransport created on this thread is this
+          // establisher's underlying socket.
+          this.thread.on("networksocket", (sock) => {
+            est.link(sock);
+            est.networksocket = sock;
+            return sock;
+          });
+        });
+      module.rule("UDPConnectionEstablisher::Start %p", function(ptr) {
+        this.obj(ptr).class("ConnectionEstablisher").capture();
+      });
+      module.rule("UDPConnectionEstablisher::Close %p aReason=%x", function(ptr, reason) {
+        this.obj(ptr).class("ConnectionEstablisher").prop("protocol", "udp")
+          .state("closed").prop("close-reason", reason).capture();
+      });
+      module.rule("UDPConnectionEstablisher::Close %p adopted conn %p DontReuse",
+        function(ptr, conn) {
+          this.obj(ptr).class("ConnectionEstablisher").capture()
+            .link(this.obj(conn).capture());
+        });
+      module.rule("UDPConnectionEstablisher::Close closing connection %p", function(conn) {
+        this.obj(conn).capture();
+      });
+      module.rule("UDPConnectionEstablisher::Finish %p result=%x", function(ptr, rv) {
+        this.obj(ptr).class("ConnectionEstablisher").capture();
+      });
+      module.rule("UDPConnectionEstablisher::CreateAndConfigureUDPConn [this=%p info=%s]",
+        function(ptr, info) {
+          this.obj(ptr).class("ConnectionEstablisher").prop("protocol", "udp")
+            .propIfNull("info", info).capture();
+        });
+      logan.summaryProps("ConnectionEstablisher", ["protocol", "state"]);
+
+      /******************************************************************************
+       * HappyEyeballsTransaction (derives from SpeculativeTransaction; the
+       *   destroy is handled by the existing SpeculativeTransaction::Close rule)
+       ******************************************************************************/
+
+      module.rule("HappyEyeballsTransaction ctor %p handle=%p", function(ptr, handle) {
+        let tr = this.obj(ptr).create("HappyEyeballsTransaction")
+          .prop("zero-rtt-handle", handle).grep().capture();
+        if (this.thread.happyeye) {
+          this.thread.happyeye.link(tr);
+        }
+        if (this.thread.lastestablisher) {
+          this.thread.lastestablisher.link(tr);
+        }
+      });
+      module.rule("HappyEyeballsTransaction::Adopt %p realTxn=%p entered0RTT=%d",
+        function(ptr, realTxn, entered0rtt) {
+          let tr = this.obj(ptr).class("HappyEyeballsTransaction")
+            .state("adopted").prop("entered-0rtt", entered0rtt).capture();
+          tr.link(this.obj(realTxn));
+        });
+      module.rule("HappyEyeballsTransaction::Close %p reason=%x mState=%d adopted=%d entered0RTT=%d",
+        function(ptr, reason, mState, adopted, entered0rtt) {
+          this.obj(ptr).class("HappyEyeballsTransaction")
+            .prop("close-reason", reason).capture();
+        });
+      module.rule("HappyEyeballsTransaction::Close %p disqualifying non-0-RTT attempt", function(ptr) {
+        this.obj(ptr).class("HappyEyeballsTransaction").capture();
+      });
+      module.rule("HappyEyeballsTransaction::Transition %p mState=%d aNext=%d",
+        function(ptr, mState, aNext) {
+          this.obj(ptr).class("HappyEyeballsTransaction").capture();
+        });
+      module.rule("HappyEyeballsTransaction::ReadSegments %p surfacing handshake error rv=%x real=%p secInfo=%p",
+        function(ptr, rv, real, secInfo) {
+          this.obj(ptr).class("HappyEyeballsTransaction").capture();
+        });
+      module.rule("HappyEyeballsTransaction dtor %p", function(ptr) {
+        // The object was already destroyed by SpeculativeTransaction::Close;
+        // this dtor LOG fires later but the prior destroy() removed the
+        // mapping, so re-fetching would create a ghost. Skip explicitly.
+      });
+      logan.summaryProps("HappyEyeballsTransaction", ["state"]);
+
+      /******************************************************************************
        * connection manager
        ******************************************************************************/
 
