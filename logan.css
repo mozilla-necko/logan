@@ -122,6 +122,10 @@ div.log_line.expanded.revealer {
 div.log_line.checked {
   font-weight: bold;
 }
+div.log_line.stuck {
+  font-weight: bold;
+  font-size: 1.15em;
+}
 div.log_line.summary {
   /* text-shadow: 1px 1px 0px white, 1px -1px 0px white, -1px 1px 0px white, -1px -1px 0px white; */
 }
