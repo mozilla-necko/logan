@@ -775,6 +775,60 @@ function pointerTrim(ptr) {
   };
 
 
+  // Mirrors the LOG_LEVEL_STRING_TO_LETTER table in firefox-devtools/profiler
+  // (src/profile-logic/marker-data.ts).
+  const LOG_LEVEL_LETTER = {
+    Error: 'E', Warning: 'W', Info: 'I', Debug: 'D', Verbose: 'V',
+  };
+
+  function formatLogTimestamp(absoluteMs) {
+    const pad = (p, c) => String(p).padStart(c, '0');
+    const d = new Date(absoluteMs);
+    const ns = Math.trunc((absoluteMs - Math.trunc(absoluteMs)) * 1e6);
+    return (
+      `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1, 2)}-${pad(d.getUTCDate(), 2)} ` +
+      `${pad(d.getUTCHours(), 2)}:${pad(d.getUTCMinutes(), 2)}:${pad(d.getUTCSeconds(), 2)}.` +
+      `${pad(d.getUTCMilliseconds(), 3)}${pad(ns, 6)} UTC`
+    );
+  }
+
+  // Reproduces window.extractGeckoLogs from firefox-devtools/profiler so a
+  // processed profile JSON can be turned back into a MOZ_LOG-format text blob
+  // that logan's parser can consume.
+  function extractProfilerLogs(profile) {
+    const stringArray = (profile.shared && profile.shared.stringArray) || [];
+    const startTime = profile.meta.startTime;
+    const lines = [];
+    for (const thread of profile.threads) {
+      const markers = thread.markers;
+      const len = markers.length || (markers.data && markers.data.length) || 0;
+      const processName = thread.processName || 'Unknown Process';
+      for (let i = 0; i < len; i++) {
+        const data = markers.data[i];
+        if (!data || data.type !== 'Log') continue;
+        const t = markers.startTime[i];
+        if (t === null || t === undefined) continue;
+        const ts = formatLogTimestamp(startTime + t);
+        let line;
+        if ('message' in data) {
+          if (!data.message) continue;
+          const moduleName = stringArray[markers.name[i]] || '';
+          const levelStr = stringArray[data.level] || '';
+          const levelLetter = LOG_LEVEL_LETTER[levelStr] || 'D';
+          line = `${ts} - [${processName} ${thread.pid}: ${thread.name}]: ${levelLetter}/${moduleName} ${data.message.trim()}`;
+        } else {
+          if (!data.name) continue;
+          const prefix = data.module && data.module.includes('/') ? '' : 'D/';
+          line = `${ts} - [${processName} ${thread.pid}: ${thread.name}]: ${prefix}${data.module} ${data.name.trim()}`;
+        }
+        lines.push(line);
+      }
+    }
+    if (!lines.length) return null;
+    lines.sort();
+    return lines.join('\n') + '\n';
+  }
+
   let loganImpl = {
     // processing state sub-object, passed to rule consumers
     _proc: {
@@ -974,6 +1028,12 @@ function pointerTrim(ptr) {
       this.initProc(UI);
       UI.searchingEnabled(false);
 
+      const profilerMatch = url.match(/^https?:\/\/profiler\.firefox\.com\/public\/([^/?#]+)/);
+      if (profilerMatch) {
+        this.consumeProfilerProfile(UI, profilerMatch[1], url);
+        return;
+      }
+
       let contentType = '';
       UI.loadPhase("requesting...");
       fetch(url, { mode: 'cors', credentials: 'omit', }).then(function(response) {
@@ -991,6 +1051,39 @@ function pointerTrim(ptr) {
         }
         UI.searchingEnabled(true);
       }.bind(this)).catch((reason) => {
+        window.onerror(reason);
+        UI.searchingEnabled(true);
+      });
+    },
+
+    consumeProfilerProfile: function(UI, hash, originalURL) {
+      const profileURL = `https://storage.googleapis.com/profile-store/${hash}`;
+      UI.loadPhase("fetching profile...");
+      fetch(profileURL, { mode: 'cors', credentials: 'omit' }).then((response) => {
+        if (!response.ok) {
+          throw new Error(`Failed to fetch profile (${response.status})`);
+        }
+        return response.arrayBuffer();
+      }).then((buf) => {
+        const view = new Uint8Array(buf);
+        if (view.length >= 2 && view[0] === 0x1f && view[1] === 0x8b) {
+          const ds = new DecompressionStream("gzip");
+          return new Response(new Blob([buf]).stream().pipeThrough(ds)).arrayBuffer();
+        }
+        return buf;
+      }).then((buf) => {
+        UI.loadPhase("extracting logs...");
+        const text = new TextDecoder().decode(buf);
+        const profile = JSON.parse(text);
+        const logs = extractProfilerLogs(profile);
+        if (!logs) {
+          throw new Error("No Log markers found in this profile. Capture with the 'Logging' profiler feature enabled.");
+        }
+        const blob = new Blob([logs], { type: "text/plain" });
+        blob.name = `profile-${hash}.log`;
+        this.consumeFiles(UI, [blob]);
+        UI.searchingEnabled(true);
+      }).catch((reason) => {
         window.onerror(reason);
         UI.searchingEnabled(true);
       });
