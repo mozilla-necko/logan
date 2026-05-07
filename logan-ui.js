@@ -361,6 +361,9 @@
         }
       }
       select.append($("<option>").attr("value", '*').text('*'));
+      if (select.find("option[value='nsHttpChannel']").length) {
+        select.val("nsHttpChannel").trigger("change");
+      }
     },
 
     fillSearchBy: function(props) {
