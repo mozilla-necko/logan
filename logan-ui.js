@@ -821,8 +821,8 @@
 
     addResult: function(obj, searchProp) {
       return this.addRevealer(obj, (element) => {
-        if (this.isStuckHttpChannel(obj)) {
-          element.addClass("stuck");
+        if (this.isIncompleteHttpChannel(obj)) {
+          element.addClass("incomplete");
         }
         element
           .append($("<span>")
@@ -839,13 +839,13 @@
       });
     },
 
-    // The rules engine stamps state="stuck" on AsyncOpen and only clears it
-    // when the channel makes real progress (OnStartRequest, redirect, cancel,
-    // destroy). So a channel still in state="stuck" at render time never
-    // reached OnStartRequest.
-    isStuckHttpChannel: function(obj) {
+    // The rules engine stamps state="incomplete" on AsyncOpen and only clears
+    // it when the channel makes real progress (OnStartRequest, redirect,
+    // cancel, destroy). So a channel still in state="incomplete" at render
+    // time never reached OnStartRequest.
+    isIncompleteHttpChannel: function(obj) {
       return obj.props.className === "nsHttpChannel" &&
-        obj.props.state === "stuck";
+        obj.props.state === "incomplete";
     },
 
     addSummary: function(obj) {

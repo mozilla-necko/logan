@@ -122,7 +122,7 @@ div.log_line.expanded.revealer {
 div.log_line.checked {
   font-weight: bold;
 }
-div.log_line.stuck {
+div.log_line.incomplete {
   font-weight: bold;
   font-size: 1.15em;
 }
