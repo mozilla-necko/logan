@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "Send Profiler Logs to Logan",
+  "version": "0.1.0",
+  "description": "Extract MOZ_LOG entries from a Firefox Profiler page and open them in logan.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "logan-profiler@mozilla-necko",
+      "strict_min_version": "115.0"
+    }
+  },
+  "permissions": ["scripting", "activeTab", "tabs"],
+  "host_permissions": [
+    "https://profiler.firefox.com/*",
+    "https://mozilla-necko.github.io/*"
+  ],
+  "action": {
+    "default_title": "Open profiler logs in logan"
+  },
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://mozilla-necko.github.io/logan/*"],
+      "js": ["inject-logan.js"],
+      "run_at": "document_start"
+    }
+  ]
+}
