@@ -621,14 +621,14 @@ logan.schema("MOZ_LOG",
           channel.alias(newch);
           this.obj(oldch).capture().link(newch);
         });
-      // The "stuck" state is the initial state after AsyncOpen and stays in
-      // place through the Connect phase. Anything past the channel actually
+      // The "incomplete" state is the initial state after AsyncOpen and stays
+      // in place through the Connect phase. Anything past the channel actually
       // making progress -- OnStartRequest ("started"), OnRedirectVerifyCallback
       // success ("redirected"), Cancel ("cancelled"), destroy ("released") --
-      // overwrites it. So a channel still showing state="stuck" at the end of
-      // a log is one that AsyncOpen'd but never reached OnStartRequest.
+      // overwrites it. So a channel still showing state="incomplete" at the
+      // end of a log is one that AsyncOpen'd but never reached OnStartRequest.
       module.rule("nsHttpChannel::AsyncOpen [this=%p]", function(ptr) {
-        let channel = this.obj(ptr).state("stuck").capture();
+        let channel = this.obj(ptr).state("incomplete").capture();
         channel.__opentime = this.timestamp;
         if (this.thread.httpchannel_init === channel) {
           delete this.thread.httpchannel_init;
@@ -647,8 +647,8 @@ logan.schema("MOZ_LOG",
         this.obj(ch).link(clas).capture();
       });
       module.rule("nsHttpChannel::Connect [this=%p]", function(ptr) {
-        // Capture the line but keep state="stuck" -- Connect alone doesn't
-        // count as the channel making forward progress.
+        // Capture the line but keep state="incomplete" -- Connect alone
+        // doesn't count as the channel making forward progress.
         this.obj(ptr).capture();
       });
       module.rule("nsHttpChannel::ContinueBeginConnectWithResult [this=%p]", function(ch) {
