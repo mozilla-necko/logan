@@ -1312,17 +1312,28 @@
 
     window.addEventListener("message", (event) => {
       if (event.source !== window) return;
+      if (event.origin !== location.origin) return;
       const data = event.data;
       if (!data || data.type !== "logan-extension-load") return;
+      console.log("[logan-ext] page: received message", data);
       let blob;
       if (data.blob instanceof Blob) {
         blob = data.blob;
       } else if (typeof data.logs === "string") {
         blob = new Blob([data.logs], { type: "text/plain" });
       } else {
+        console.warn("[logan-ext] page: no usable blob/logs in message");
         return;
       }
-      blob.name = data.name || "extension-logs.log";
+      try {
+        blob.name = (typeof data.name === "string" ? data.name : "").replace(/[^\w.\- ]/g, "") || "extension-logs.log";
+      } catch (e) {
+        // some browsers may freeze Blob; fall back to a wrapper
+        const wrapped = new Blob([blob], { type: blob.type });
+        wrapped.name = "extension-logs.log";
+        blob = wrapped;
+      }
+      console.log("[logan-ext] page: feeding blob to logan, size =", blob.size, "name =", blob.name);
       UI.clearResultsView();
       UI.setSearchView(true);
       logan.consumeFiles(UI, [blob]);
