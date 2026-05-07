@@ -6,7 +6,8 @@ The main focus is to search for objects of selected classes and their properties
 
 The analyzer is based on [logan-rules.js](logan-rules.js) file containing set of matching rules to track objects lifetime, relations and properties.  It's hugely generic, thus very powerful and pretty much open to enhancements by anyone.  See below the **Rules definition reference** section for details.
 
-The code has originally been published on [GitHub](https://github.com/mayhemer/logan) and a **live instance is running on [my site](https://janbambas.cz/moz/logan/)** as well as a beta staging [here](https://janbambas.cz/moz/logan/beta/).
+The code has originally been published by [mayhemer](https://github.com/mayhemer/logan) and forked into mozilla-necko repo.
+There is a [live instance running here](https://mozilla-necko.github.io/logan/).
 
 # Current state
 
@@ -82,7 +83,7 @@ The code lives in [logan-netdiag.js](logan-netdiag.js) with API referred from th
 
 # Rules definition reference
 
-The rules are defined in [logan-rules.js](logan-rules.js) file in a hierarchy of a *schema* (a top level name-space), and *modules* within the schema.  A module is an equivalent of a mozilla log module (e.g. nsHttp, cache2).  See [logan-rules.js heading](https://github.com/mayhemer/logan/blob/master/logan-rules.js) for a life example.
+The rules are defined in [logan-rules.js](logan-rules.js) file in a hierarchy of a *schema* (a top level name-space), and *modules* within the schema.  A module is an equivalent of a mozilla log module (e.g. nsHttp, cache2).  See [logan-rules.js heading](https://github.com/mozilla-necko/logan/blob/master/logan-rules.js) for a life example.
 
 There are multiple schemes.  You can load MOZ\_LOG generated files, raw console output, a try run console output, logs from TaskCluster (try server).  Nice thing is that these "wrapping" schemes are capable of "forwarding" the unwrapped input to lower level schemes such as MOZ\_LOG or 'text console', which means everything is nicely merged together - for instance DOM window counters and MOZ\_LOG tracked objects.
 
