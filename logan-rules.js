@@ -1144,6 +1144,315 @@ logan.schema("MOZ_LOG",
       });
 
       /******************************************************************************
+       * NullHttpTransaction / SpeculativeTransaction
+       ******************************************************************************/
+
+      // The base ctor only logs when the activity distributor is active. The
+      // class name in the source has a typo ("NulHttpTransaction") -- match it
+      // verbatim. This is also the only log line that carries the origin.
+      module.rule("NulHttpTransaction::NullHttpTransaction() mActivityDistributor is active [this=%p, %s]",
+        function(ptr, origin) {
+          this.obj(ptr).create("NullHttpTransaction").prop("origin", origin).mention(origin).grep().capture();
+        });
+
+      // The SpeculativeTransaction ctor itself is silent, so the first sighting
+      // of the pointer is usually one of these three lines. .class() retro-classes
+      // the object if a prior unclassed reference (e.g. HttpConnectionUDP::Activate
+      // trans=%p) already created it.
+      module.rule("SpeculativeTransaction::FetchHTTPSRR [this=%p]", function(ptr) {
+        this.obj(ptr).class("SpeculativeTransaction").grep().capture();
+      });
+      module.rule("SpeculativeTransaction::OnHTTPSRRAvailable [this=%p]", function(ptr) {
+        this.obj(ptr).class("SpeculativeTransaction").grep().capture();
+      });
+      module.rule("SpeculativeTransaction::Close %p aReason=%x", function(ptr, reason) {
+        this.obj(ptr).class("SpeculativeTransaction").prop("close-reason", reason).capture().destroy();
+      });
+
+      /******************************************************************************
+       * HttpConnectionUDP (the HTTP/3 connection)
+       ******************************************************************************/
+
+      module.rule("Creating HttpConnectionUDP @%p", function(ptr) {
+        this.obj(ptr).create("HttpConnectionUDP").grep();
+      });
+      module.rule("HttpConnectionUDP::Init this=%p", function(conn) {
+        this.thread.httpconnudp = this.obj(conn).capture();
+      });
+      module.rule("HttpConnectionUDP::Activate [this=%p trans=%p caps=%x]", function(conn, trans, caps) {
+        conn = this.obj(conn).capture();
+        trans = this.obj(trans).state("active").capture().link(conn);
+        trans.httpconnection = conn;
+        this.thread.activatedhttptrans = trans;
+        // Allow the next Http3Session::AddStream / Http3Stream ctor to find the trans.
+        this.thread.httpspdytransaction = trans;
+        netcap(n => { n.transactionActive(trans) });
+      });
+      module.rule("HttpConnectionUDP::Close [this=%p reason=%x]", function(conn, rv) {
+        this.obj(conn).state("done").capture();
+      });
+      module.rule("HttpConnectionUDP::CloseTransaction[this=%p trans=%p reason=%x]", function(conn, trans, rv) {
+        this.obj(conn).capture();
+      });
+      module.rule("HttpConnectionUDP::DontReuse %p http3session=%p", function(conn, session) {
+        conn = this.obj(conn).capture();
+        this.obj(session).class("Http3Session").capture().link(conn);
+      });
+      module.rule("HttpConnectionUDP::OnInputReady %p rv=%x", function(conn) {
+        this.obj(conn).state("recv").capture();
+      });
+      module.rule("HttpConnectionUDP::OnQuicTimeoutExpired [this=%p]", function(conn) {
+        this.obj(conn).capture();
+      });
+      module.rule("HttpConnectionUDP::ResumeSend [this=%p]", function(conn) {
+        this.obj(conn).capture();
+      });
+      module.rule("HttpConnectionUDP::ForceSend [this=%p]", function(conn) {
+        this.obj(conn).capture();
+      });
+      module.rule("HttpConnectionUDP::ForceRecv [this=%p]", function(conn) {
+        this.obj(conn).capture();
+      });
+      module.rule("Destroying HttpConnectionUDP @%p", function(ptr) {
+        this.obj(ptr).destroy();
+      });
+      logan.summaryProps("HttpConnectionUDP", ["state"]);
+
+      /******************************************************************************
+       * Http3Session
+       ******************************************************************************/
+
+      module.rule("Http3Session::Http3Session [this=%p]", function(session) {
+        session = this.obj(session).create("Http3Session").grep();
+        this.thread.on("httpconnudp", conn => {
+          conn.link(session);
+          return conn;
+        });
+      });
+      module.rule("Http3Session::Init %p", function(session) {
+        this.obj(session).capture();
+      });
+      module.rule("Http3Session::Init origin=%s, alpn=%s, selfAddr=%s, peerAddr=%s, qpack table size=%u, max blocked streams=%u webtransport=%d [this=%p]",
+        function(origin, alpn, selfAddr, peerAddr, qpack, maxBlocked, webtransport, session) {
+          this.obj(session)
+            .prop("origin", origin)
+            .prop("alpn", alpn)
+            .prop("self-addr", selfAddr)
+            .prop("peer-addr", peerAddr)
+            .propIf("webtransport", true, _ => webtransport === "1")
+            .mention(origin)
+            .capture();
+        });
+      module.rule("Http3Session::Shutdown %p allowToRetryWithDifferentIPFamily=%d", function(session, retry) {
+        this.obj(session).capture();
+      });
+      module.rule("Http3Session::~Http3Session %p", function(session) {
+        this.obj(session).destroy();
+      });
+
+      module.rule("Http3Session::AddStream %p atrans=%p.", function(session, trans) {
+        trans = this.obj(trans).capture();
+        session = this.obj(session).class("Http3Session").capture().grep().link(trans);
+        this.thread.http3session = session;
+        this.thread.http3transaction = trans;
+      });
+      module.rule("Http3Session::AddStream new  WeTransport session %p atrans=%p.", function(session, trans) {
+        trans = this.obj(trans).capture();
+        session = this.obj(session).class("Http3Session").capture().grep().link(trans);
+        this.thread.http3session = session;
+        this.thread.http3transaction = trans;
+      });
+      // The source format ends with a literal trailing space; preserve it verbatim.
+      module.rule("Http3Session::AddStream first session=%p trans=%p ", function(session, trans) {
+        this.obj(session).capture();
+        this.obj(trans).capture();
+      });
+      module.rule("Http3Session::QueueStream %p stream %p queued.", function(session, stream) {
+        this.obj(session).capture();
+        this.obj(stream).state("queued").capture();
+      });
+      module.rule("Http3Session::ProcessPending %p stream %p woken from queue.", function(session, stream) {
+        this.obj(session).capture();
+        this.obj(stream).capture();
+      });
+      module.rule("Http3Session::TryActivating [stream=%p, this=%p state=%d]", function(stream, session, state) {
+        this.obj(session).capture();
+        this.obj(stream).capture();
+      });
+      module.rule("Http3Session::TryActivating %p stream=%p already queued.", function(session, stream) {
+        this.obj(session).capture();
+        this.obj(stream).capture();
+      });
+      module.rule("Http3Session::TryActivating %p stream=%p no room for more concurrent streams", function(session, stream) {
+        this.obj(session).capture();
+        this.obj(stream).capture();
+      });
+      module.rule("Http3Session::TryActivating returns error=0x%x[stream=%p, this=%p]", function(rv, stream, session) {
+        this.obj(stream).capture();
+        this.obj(session).capture();
+      });
+      module.rule("Http3Session::TryActivating streamId=0x%x for stream=%p [this=%p].", function(streamid, stream, session) {
+        this.obj(stream).propIfNull("id", streamid).capture();
+        this.obj(session).capture();
+      });
+      module.rule("Http3Session::ProcessInput writer=%p [this=%p state=%d]", function(writer, session, state) {
+        this.obj(session).capture();
+      });
+      module.rule("Http3Session::ProcessInput received=%u", function(len) {
+        // No object on this line; let it ride on the previous capture.
+      });
+      module.rule("Http3Session::ProcessEvents [this=%p]", function(session) {
+        this.obj(session).capture();
+      });
+      module.rule("Http3Session::ProcessOutput reader=%p, [this=%p]", function(reader, session) {
+        this.obj(session).capture();
+      });
+      module.rule("Http3Session::SendData [this=%p]", function(session) {
+        this.obj(session).capture();
+      });
+      module.rule("Http3Session::SendData call ReadSegments from stream=%p [this=%p]", function(stream, session) {
+        this.obj(session).capture();
+        this.obj(stream).capture();
+      });
+
+      module.rule("Http3Session::Close [this=%p]", function(session) {
+        this.obj(session).state("closed").capture();
+      });
+      module.rule("Http3Session::Closing [this=%p]", function(session) {
+        this.obj(session).state("closing").capture();
+      });
+      module.rule("Http3Session::CloseTransaction %p %p 0x%x", function(session, trans, rv) {
+        this.obj(session).capture();
+        this.obj(trans).capture();
+      });
+      module.rule("Http3Session::CloseTransaction %p %p 0x%x - not found.", function(session, trans, rv) {
+        this.obj(session).capture();
+        this.obj(trans).capture();
+      });
+      module.rule("Http3Session::CloseTransaction probably a cancel. this=%p, trans=%p, result=0x%x, streamId=0x%x stream=%p",
+        function(session, trans, rv, streamid, stream) {
+          this.obj(session).capture();
+          this.obj(trans).capture();
+          this.obj(stream).capture();
+        });
+      module.rule("Http3Session::CloseStreamInternal %p %p 0x%x", function(session, stream, rv) {
+        this.obj(session).capture();
+        this.obj(stream).state("closed").prop("status", rv).capture();
+      });
+      module.rule("Close remaining stream in queue:%p", function(stream) {
+        this.obj(stream).state("closed").capture();
+      });
+
+      module.rule("Http3Session::TransactionHasDataToWrite %p trans=%p", function(session, trans) {
+        this.obj(session).capture();
+      });
+      module.rule("Http3Session::TransactionHasDataToWrite %p ID is 0x%x", function(session, id) {
+        this.obj(session).capture();
+      });
+      module.rule("Http3Session::TransactionHasDataToWrite %p caller %p not found", function(session, caller) {
+        this.obj(session).capture();
+      });
+      module.rule("Http3Session::TransactionHasDataToRecv %p trans=%p", function(session, trans) {
+        this.obj(session).capture();
+      });
+      module.rule("Http3Session::TransactionHasDataToRecv %p ID is 0x%x", function(session, id) {
+        this.obj(session).capture();
+      });
+      module.rule("Http3Session::TransactionHasDataToRecv %p caller %p not found", function(session, caller) {
+        this.obj(session).capture();
+      });
+      module.rule("Http3Session::ConnectSlowConsumer %p 0x%x", function(session, id) {
+        this.obj(session).capture();
+      });
+
+      module.rule("Http3Session::CallCertVerification [this=%p]", function(session) {
+        this.obj(session).capture();
+      });
+      module.rule("Http3Session::Authenticated error=0x%x [this=%p].", function(err, session) {
+        this.obj(session).capture();
+      });
+      module.rule("Http3Session::DontReuse %p", function(session) {
+        this.obj(session).capture();
+      });
+
+      logan.summaryProps("Http3Session", ["alpn", "origin"]);
+
+      /******************************************************************************
+       * Http3Stream
+       ******************************************************************************/
+
+      module.rule("Http3Stream::Http3Stream [this=%p]", function(ptr) {
+        let stream = this.obj(ptr).create("Http3Stream").grep();
+        this.thread.on("http3session", session => {
+          session.link(stream);
+          return session;
+        });
+        this.thread.on("http3transaction", tr => {
+          tr.link(stream);
+          if (tr.props["url"]) {
+            stream.prop("url", tr.props["url"]);
+          }
+          stream.httptransaction = tr;
+        });
+        // Clear the H/2 hand-off so a stale value doesn't bleed across.
+        delete this.thread.httpspdytransaction;
+        this.thread.h3stream = stream;
+      });
+      module.rule("Http3Stream::TryActivating [this=%p]", function(stream) {
+        this.obj(stream).capture();
+      });
+      module.rule("Http3Stream::GetHeadersString %p avail=%u.", function(stream, avail) {
+        this.obj(stream).capture();
+      });
+      module.rule("Http3Stream::GetHeadersString %p Need more header bytes. Len = %u", function(stream, len) {
+        this.obj(stream).capture();
+      });
+      module.rule("Http3Stream::OnReadSegment count=%u state=%d [this=%p]", function(count, state, stream) {
+        this.obj(stream).prop("send-state", state).capture();
+      });
+      module.rule("Http3Stream::OnReadSegment %p cannot activate now. queued.", function(stream) {
+        this.obj(stream).state("queued").capture();
+      });
+      module.rule("Http3Stream::OnReadSegment %p cannot activate error=0x%x.", function(stream, rv) {
+        this.obj(stream).capture();
+      });
+      module.rule("Http3Stream::OnReadSegment %p sending body returns error=0x%x.", function(stream, rv) {
+        this.obj(stream).capture();
+      });
+      // The opening "[" has no matching "]" in the source format string.
+      module.rule("Http3Stream::OnWriteSegment [this=%p, state=%d", function(stream, state) {
+        this.obj(stream).prop("recv-state", state).capture();
+      });
+      module.rule("Http3Stream::ReadSegments state=%d [this=%p]", function(state, stream) {
+        this.obj(stream).capture();
+      });
+      module.rule("Http3Stream::ReadSegments rv=0x%x read=%u sock-cond=%x again=%d [this=%p]",
+        function(rv, read, cond, again, stream) {
+          stream = this.obj(stream).capture();
+          if (parseInt(read) > 0) {
+            stream.state("sent");
+            if (stream.httptransaction) {
+              netcap(n => { n.transactionReceived(stream.httptransaction, parseInt(read)) });
+            }
+          }
+        });
+      module.rule("Http3Stream %p ReadSegments forcing OnReadSegment call", function(stream) {
+        this.obj(stream).capture();
+      });
+      module.rule("Http3Stream %p ReadSegments request stream aborted due to response side closure", function(stream) {
+        this.obj(stream).state("aborted").capture();
+      });
+      module.rule("Http3Stream::WriteSegments [this=%p]", function(stream) {
+        this.obj(stream).state("recv").capture();
+      });
+      module.rule("Http3Stream::WriteSegments rv=0x%x", function(rv) {
+        // The full source format wraps several args; this prefix lets the line
+        // attach to the most-recent Http3Stream capture without dropping it.
+      });
+
+      logan.summaryProps("Http3Stream", ["id", "url"]);
+
+      /******************************************************************************
        * SpdyConnectTransaction
        ******************************************************************************/
 
