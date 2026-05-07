@@ -1310,6 +1310,24 @@
       location.search = escape($("#url").val());
     });
 
+    window.addEventListener("message", (event) => {
+      if (event.source !== window) return;
+      const data = event.data;
+      if (!data || data.type !== "logan-extension-load") return;
+      let blob;
+      if (data.blob instanceof Blob) {
+        blob = data.blob;
+      } else if (typeof data.logs === "string") {
+        blob = new Blob([data.logs], { type: "text/plain" });
+      } else {
+        return;
+      }
+      blob.name = data.name || "extension-logs.log";
+      UI.clearResultsView();
+      UI.setSearchView(true);
+      logan.consumeFiles(UI, [blob]);
+    });
+
     $("#search_className").on("change", (event) => {
       let props = logan.searchProps[event.target.value];
       UI.fillSearchBy(props);
