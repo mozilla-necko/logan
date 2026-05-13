@@ -2599,6 +2599,59 @@ logan.schema("treeherder log",
 ); // treeherder log
 
 
+logan.schema("live backing log",
+  /*
+   * This is for live_backing.log from TaskCluster CI runs.
+   * Lines are wrapped with: [prefix[:[level]] [ISO-timestamp+offset]] content
+   * Timestamps use +00:00 UTC offset instead of Z, and multiple prefix types
+   * are used: task, taskcluster, fetches, setup, cache, volume.
+   */
+
+  (line, proc) => {
+    let match;
+
+    proc._ipc = true;
+
+    /* [task 2026-05-12T14:27:24.738+00:00] 14:27:24     INFO -  some content */
+    match = line.match(/^\[(\w+(?::\w+)?) (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+(?:Z|[+-]\d{2}:\d{2}))\] (\d+:\d{2}:\d{2})\s+([A-Z]+) - (.*)$/);
+    if (match) {
+      let [all, origin, timestamp, time, level, text] = match;
+      return {
+        text: text,
+        timestamp: new Date(timestamp),
+        forward: { "./mach test": text },
+      };
+    }
+
+    /* [task 2026-05-12T14:25:07.995+00:00] plain content (no INFO - prefix) */
+    match = line.match(/^\[(\w+(?::\w+)?) (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+(?:Z|[+-]\d{2}:\d{2}))\] (.*)$/);
+    if (match) {
+      let [all, origin, timestamp, text] = match;
+      return {
+        text: text,
+        timestamp: new Date(timestamp),
+        forward: { "./mach test": text },
+      };
+    }
+
+    /* [taskcluster:error] plain content (no timestamp) */
+    match = line.match(/^\[(\w+(?::\w+)?)\] (.*)$/);
+    if (match) {
+      let [all, origin, text] = match;
+      return {
+        text: text,
+      };
+    }
+
+    return undefined;
+  },
+
+  (schema) => {
+
+  }
+); // live backing log
+
+
 logan.schema("rr console",
   /*
    * This is for piped console output when running rr
